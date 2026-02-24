@@ -3,6 +3,9 @@ const chatHistory = document.getElementById('chat-history');
 const userInput = document.getElementById('user-input');
 const sendButton = document.getElementById('send-button');
 
+// Store User ID
+let currentUserId = null;
+
 // Mock Product Data (For Demonstration)
 const mockProducts = [
     {
@@ -67,6 +70,33 @@ async function sendMessage() {
     // Scroll to bottom
     scrollToBottom();
 
+    // Check if we need to set the User ID, or if the user is explicitly passing one
+    if (text.match(/^cus_[a-zA-Z0-9]+$/)) {
+        currentUserId = text;
+        const aiMsg = createMessage(`Thank you! You are now logged in as ${currentUserId}. How can I help you with your order or any of our products today?`, 'ai');
+        chatHistory.appendChild(aiMsg);
+        scrollToBottom();
+        return;
+    } else if (text.match(/^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/)) {
+        currentUserId = text;
+        const aiMsg = createMessage(`Thank you! You are now logged in via Email (${currentUserId}). How can I help you today?`, 'ai');
+        chatHistory.appendChild(aiMsg);
+        scrollToBottom();
+        return;
+    } else if (text.match(/cus_[a-zA-Z0-9]+/)) {
+        currentUserId = text.match(/cus_[a-zA-Z0-9]+/)[0];
+    } else if (text.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/)) {
+        currentUserId = text.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/)[0];
+    }
+
+    if (!currentUserId && text) {
+        currentUserId = text;
+        const aiMsg = createMessage(`Thank you! You are now logged in as ${currentUserId}. How can I help you with your order or any of our products today?`, 'ai');
+        chatHistory.appendChild(aiMsg);
+        scrollToBottom();
+        return;
+    }
+
     // 2. AI Thinking State
     const thinkingId = 'thinking-' + Date.now();
     const aiMsg = createMessage('Thinking...', 'ai');
@@ -76,12 +106,12 @@ async function sendMessage() {
 
     try {
         // 3. Real API Call to Localhost
-        const response = await fetch('http://localhost:8000/chat', {
+        const response = await fetch('http://localhost:8005/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: text })
+            body: JSON.stringify({ message: text, user_id: currentUserId })
         });
 
         if (!response.ok) throw new Error('Server issues');
@@ -112,12 +142,65 @@ async function sendMessage() {
         // Using marked.parse() ensures proper HTML rendering (including tables) and preserves spaces
         bubble.innerHTML = marked.parse(data.response);
 
+        // Add feedback buttons if we have a message ID
+        if (data.message_id) {
+            const feedbackContainer = document.createElement('div');
+            feedbackContainer.className = 'feedback-container';
+
+            // Inline SVGs to ensure they render immediately without library dependencies
+            const thumbsUpSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>`;
+
+            const thumbsDownSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>`;
+
+            const label = document.createElement('span');
+            label.innerText = 'Helpful? ';
+            label.style.fontSize = '0.75rem';
+            label.style.color = '#666';
+            label.style.display = 'flex';
+            label.style.alignItems = 'center';
+
+            const upBtn = document.createElement('button');
+            upBtn.className = 'feedback-btn';
+            upBtn.innerHTML = thumbsUpSvg;
+
+            const downBtn = document.createElement('button');
+            downBtn.className = 'feedback-btn';
+            downBtn.innerHTML = thumbsDownSvg;
+
+            upBtn.onclick = () => submitFeedback(data.message_id, 'up', upBtn, downBtn);
+            downBtn.onclick = () => submitFeedback(data.message_id, 'down', downBtn, upBtn);
+
+            feedbackContainer.appendChild(label);
+            feedbackContainer.appendChild(upBtn);
+            feedbackContainer.appendChild(downBtn);
+
+            aiMsg.appendChild(feedbackContainer);
+        }
+
     } catch (error) {
         console.error('Error:', error);
-        aiMsg.querySelector('.bubble').innerText = "I'm having trouble connecting to the server. Please make sure the backend is running at localhost:8000.";
+        aiMsg.querySelector('.bubble').innerText = "I'm having trouble connecting to the server. Please make sure the backend is running at localhost:8005.";
     }
 
     scrollToBottom();
+}
+
+async function submitFeedback(messageId, type, activeBtn, otherBtn) {
+    try {
+        const response = await fetch('http://localhost:8005/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message_id: messageId, feedback: type })
+        });
+
+        if (response.ok) {
+            activeBtn.classList.add('active');
+            otherBtn.classList.remove('active');
+            activeBtn.parentElement.classList.add('has-feedback');
+        }
+    } catch (e) {
+        console.error('Feedback error:', e);
+    }
 }
 
 function scrollToBottom() {

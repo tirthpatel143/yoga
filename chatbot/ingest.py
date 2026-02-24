@@ -7,7 +7,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface_api import HuggingFaceInferenceAPIEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
-from config import PRODUCT_DATA_PATH, QDRANT_URL, COLLECTION_NAME, HF_TOKEN, EMBED_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
+from config import PRODUCT_DATA_PATH, QDRANT_URL, COLLECTION_NAME, HF_TOKEN, EMBED_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, PRODUCT_API_URL, X_PUBLISHABLE_KEY
 
 def clean_html(text):
     if not text:
@@ -20,14 +20,24 @@ def clean_html(text):
     clean = re.sub(r'\s+', ' ', clean).strip()
     return clean
 
-def load_products(file_path):
-    print(f"Loading products from {file_path}...")
-    if not os.path.exists(file_path):
-        print(f"Error: File {file_path} not found.")
-        return []
-        
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+def load_products():
+    import requests
+    if PRODUCT_API_URL:
+        print(f"Loading products from API: {PRODUCT_API_URL}...")
+        headers = {}
+        if X_PUBLISHABLE_KEY:
+            headers['x-publishable-api-key'] = X_PUBLISHABLE_KEY
+        response = requests.get(PRODUCT_API_URL, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    else:
+        file_path = PRODUCT_DATA_PATH
+        print(f"Loading products from file: {file_path}...")
+        if not file_path or not os.path.exists(file_path):
+            print(f"Error: File path is not set or file not found.")
+            return []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
     
     documents = []
     products = data.get("products", [])
@@ -147,7 +157,7 @@ def run_ingestion():
     )
 
     # Load documents
-    documents = load_products(PRODUCT_DATA_PATH)
+    documents = load_products()
     if not documents:
         return
 
