@@ -410,30 +410,39 @@ def chat_endpoint(request: ChatRequest):
         
         # Extract product cards using the lookup cache
         products = []
-        seen_titles = set()
         
-        # 1. Prioritize products actually mentioned in the response text
-        for title, info in product_lookup.items():
-            # Check for title or significant part of title in response
-            if title.lower() in resp_text.lower():
-                products.append(info)
-                seen_titles.add(title)
-            if len(products) >= 3:
-                break
+        # Check if the query is a basic greeting or non-product query
+        is_basic_greeting = bool(re.search(r'^(hi|hello|hey|ola|olá|oi|bom dia|boa tarde|boa noite|thanks|thank you|obrigado|obrigada|tks|how are you|tudo bem|who are you|quem é você|help|ajuda).*$', user_message.strip(), re.IGNORECASE))
         
-        # 2. Add supplementary products from source nodes if needed
-        if len(products) < 3 and hasattr(response, 'source_nodes'):
-            for node in response.source_nodes:
-                metadata = node.node.metadata
-                title = metadata.get('title')
-                
-                # Check if we have detailed info for this product in our cache
-                if title and title in product_lookup and title not in seen_titles:
-                    products.append(product_lookup[title])
+        if not is_order_related and not is_basic_greeting:
+            seen_titles = set()
+            
+            # 1. Prioritize products actually mentioned in the response text
+            # We enforce a minimum title length to avoid matching very generic single words by accident
+            for title, info in product_lookup.items():
+                if len(title) > 4 and title.lower() in resp_text.lower():
+                    products.append(info)
                     seen_titles.add(title)
-                
-                if len(products) >= 3: 
+                if len(products) >= 3:
                     break
+            
+            # 2. Add supplementary products from source nodes if needed
+            # ONLY if the user query was product-related or response looks like a recommendation
+            is_product_related = bool(re.search(r'(recommend|suggest|sugest|comprar|buy|product|produto|mat|tapete|zafu|bloco|cinta|yoga|price|preço|cost|custo|cheap|barato|expensive|caro|best|melhor|look|procur)', user_message, re.IGNORECASE))
+            is_response_recommending = bool(re.search(r'(here are|aqui estão|recommend|recomendo|opções|options)', resp_text, re.IGNORECASE))
+            
+            if len(products) < 3 and (is_product_related or is_response_recommending) and hasattr(response, 'source_nodes'):
+                for node in response.source_nodes:
+                    metadata = node.node.metadata
+                    title = metadata.get('title')
+                    
+                    # Check if we have detailed info for this product in our cache
+                    if title and title in product_lookup and title not in seen_titles:
+                        products.append(product_lookup[title])
+                        seen_titles.add(title)
+                    
+                    if len(products) >= 3: 
+                        break
 
         return {
             "response": resp_text,
