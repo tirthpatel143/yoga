@@ -71,18 +71,13 @@ async function sendMessage() {
     scrollToBottom();
 
     // Check if we need to set the User ID, or if the user is explicitly passing one
+    let isLogin = false;
     if (text.match(/^cus_[a-zA-Z0-9]+$/)) {
         currentUserId = text;
-        const aiMsg = createMessage(`Thank you! You are now logged in as ${currentUserId}. How can I help you with your order or any of our products today?`, 'ai');
-        chatHistory.appendChild(aiMsg);
-        scrollToBottom();
-        return;
+        isLogin = true;
     } else if (text.match(/^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/)) {
         currentUserId = text;
-        const aiMsg = createMessage(`Thank you! You are now logged in via Email (${currentUserId}). How can I help you today?`, 'ai');
-        chatHistory.appendChild(aiMsg);
-        scrollToBottom();
-        return;
+        isLogin = true;
     } else if (text.match(/cus_[a-zA-Z0-9]+/)) {
         currentUserId = text.match(/cus_[a-zA-Z0-9]+/)[0];
     } else if (text.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/)) {
@@ -91,7 +86,24 @@ async function sendMessage() {
 
     if (!currentUserId && text) {
         currentUserId = text;
-        const aiMsg = createMessage(`Thank you! You are now logged in as ${currentUserId}. How can I help you with your order or any of our products today?`, 'ai');
+        isLogin = true;
+    }
+
+    if (isLogin) {
+        let displayUser = currentUserId;
+        try {
+            const res = await fetch(`http://localhost:8005/user/${currentUserId}`);
+            if (res.ok) {
+                const userData = await res.json();
+                if (userData.name) {
+                    displayUser = userData.name;
+                }
+            }
+        } catch (e) {
+            console.error('Error fetching user info:', e);
+        }
+
+        const aiMsg = createMessage(`Thank you! You are now logged in as ${displayUser}. How can I help you with your order or any of our products today?`, 'ai');
         chatHistory.appendChild(aiMsg);
         scrollToBottom();
         return;

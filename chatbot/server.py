@@ -192,6 +192,43 @@ def clear_chat_history():
         print(f"Clear History Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/user/{user_id}")
+def get_user_info(user_id: str):
+    import os
+    try:
+        order_path = os.path.join(os.path.dirname(__file__), 'orders.json')
+        if os.path.exists(order_path):
+            with open(order_path, 'r', encoding='utf-8') as f:
+                order_data = json.load(f)
+            
+            for order in order_data.get('orders', []):
+                customer = order.get('customer', {})
+                uid = str(customer.get('id', '')).lower()
+                uemail = str(customer.get('email', '')).lower()
+                query = str(user_id).lower()
+                
+                if uid == query or uemail == query:
+                    first_name = customer.get('first_name')
+                    last_name = customer.get('last_name')
+                    email = customer.get('email', '')
+                    
+                    name = ""
+                    if first_name and last_name:
+                        name = f"{first_name} {last_name}"
+                    elif first_name:
+                        name = first_name
+                    elif email:
+                        name = email.split('@')[0]
+                    else:
+                        name = "User"
+                        
+                    return {"name": name, "email": email}
+                    
+        return {"name": user_id, "email": ""}
+    except Exception as e:
+        print(f"Error fetching user info: {e}")
+        return {"name": user_id, "email": ""}
+
 def fetch_order_info(query: str, user_id: str = None) -> str:
     if not ORDER_API_URL:
         return ""
