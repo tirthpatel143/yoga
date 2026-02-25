@@ -80,14 +80,28 @@ def load_products():
             else:
                 price_text = f"Price Range: {currency_str} {min_p} - {max_p}"
         
+        # Better extraction for Options (like Colors and Sizes)
+        options = product.get("options", [])
+        option_strings = []
+        for opt in options:
+            opt_title = opt.get("title", "Options")
+            opt_values = [v.get("value") for v in opt.get("values", []) if v.get("value")]
+            if opt_values:
+                option_strings.append(f"{opt_title}: {', '.join(opt_values)}")
+                
         # Create a header for this product to be included in every chunk
         product_header = f"Product: {title}\n"
         if subtitle:
             product_header += f"Subtitle: {subtitle}\n"
         if price_text:
             product_header += f"{price_text}\n"
-        if variant_details:
-            product_header += f"Options: {', '.join(set(variant_details))}\n"
+        
+        if option_strings:
+            product_header += f"Available Options ({', '.join([o.split(':')[0] for o in option_strings])}):\n"
+            for o_str in option_strings:
+                product_header += f"  - {o_str}\n"
+        elif variant_details:
+            product_header += f"Available Variants: {', '.join(set(variant_details))}\n"
         
         full_text = product_header + "Description: " + clean_description
         
@@ -144,10 +158,9 @@ def run_ingestion():
         return
 
     # Settings
-    Settings.embed_model = HuggingFaceInferenceAPIEmbedding(
-        model_name=EMBED_MODEL,
-        token=HF_TOKEN,
-        embed_batch_size=10 # smaller batches to avoid timeouts
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    Settings.embed_model = HuggingFaceEmbedding(
+        model_name=EMBED_MODEL
     )
     
     # Use SentenceSplitter for better chunking

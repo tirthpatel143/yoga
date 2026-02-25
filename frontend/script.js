@@ -189,6 +189,28 @@ async function sendMessage() {
             aiMsg.appendChild(feedbackContainer);
         }
 
+        // Render Follow-ups
+        if (data.follow_ups && data.follow_ups.length > 0) {
+            const followUpsContainer = document.createElement('div');
+            followUpsContainer.className = 'follow-ups-container';
+            const followUpsTitle = document.createElement('div');
+            followUpsTitle.className = 'follow-ups-title';
+            followUpsTitle.innerText = 'Follow-ups';
+            followUpsContainer.appendChild(followUpsTitle);
+
+            data.follow_ups.forEach(q => {
+                const item = document.createElement('div');
+                item.className = 'follow-up-item';
+                item.innerHTML = `&#8618; ${q}`;
+                item.onclick = () => {
+                    userInput.value = q;
+                    sendMessage();
+                };
+                followUpsContainer.appendChild(item);
+            });
+            aiMsg.appendChild(followUpsContainer);
+        }
+
     } catch (error) {
         console.error('Error:', error);
         aiMsg.querySelector('.bubble').innerText = "I'm having trouble connecting to the server. Please make sure the backend is running at localhost:8005.";

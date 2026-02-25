@@ -442,6 +442,19 @@ def chat_endpoint(request: ChatRequest):
             
         resp_text = str(response)
         
+        # Parse Follow-ups
+        follow_ups = []
+        if "### FOLLOW-UPS:" in resp_text:
+            parts = resp_text.split("### FOLLOW-UPS:")
+            resp_text = parts[0].strip()
+            follow_ups_raw = parts[-1].strip().split("\n")
+            for line in follow_ups_raw:
+                line = line.strip()
+                if line.startswith("- "):
+                    follow_ups.append(line[2:].strip())
+                elif line.startswith("* "):
+                    follow_ups.append(line[2:].strip())
+        
         # Save to DB
         message_id = db.save_chat_message(request.message, resp_text)
         
@@ -483,7 +496,8 @@ def chat_endpoint(request: ChatRequest):
         return {
             "response": resp_text,
             "products": products,
-            "message_id": message_id
+            "message_id": message_id,
+            "follow_ups": follow_ups
         }
     except Exception as e:
         print(f"Chat Error: {e}")

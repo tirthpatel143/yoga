@@ -125,9 +125,9 @@ def setup_chatbot():
     )
     Settings.context_window = 100000
     
-    Settings.embed_model = HuggingFaceInferenceAPIEmbedding(
-        model_name=EMBED_MODEL,
-        token=HF_TOKEN
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    Settings.embed_model = HuggingFaceEmbedding(
+        model_name=EMBED_MODEL
     )
     
     # Initialize Qdrant Client
