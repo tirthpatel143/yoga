@@ -417,8 +417,7 @@ def chat_endpoint(request: ChatRequest):
         if not is_order_related and not is_basic_greeting:
             seen_titles = set()
             
-            # 1. Prioritize products actually mentioned in the response text
-            # We enforce a minimum title length to avoid matching very generic single words by accident
+            # 1. Prioritize products whose exact full titles are in the response
             for title, info in product_lookup.items():
                 if len(title) > 4 and title.lower() in resp_text.lower():
                     products.append(info)
@@ -426,20 +425,20 @@ def chat_endpoint(request: ChatRequest):
                 if len(products) >= 3:
                     break
             
-            # 2. Add supplementary products from source nodes if needed
-            # ONLY if the user query was product-related or response looks like a recommendation
-            is_product_related = bool(re.search(r'(recommend|suggest|sugest|comprar|buy|product|produto|mat|tapete|zafu|bloco|cinta|yoga|price|preço|cost|custo|cheap|barato|expensive|caro|best|melhor|look|procur)', user_message, re.IGNORECASE))
-            is_response_recommending = bool(re.search(r'(here are|aqui estão|recommend|recomendo|opções|options)', resp_text, re.IGNORECASE))
-            
-            if len(products) < 3 and (is_product_related or is_response_recommending) and hasattr(response, 'source_nodes'):
+            # 2. Check source nodes, but rigorously ensure the bot actually mentioned the product
+            if len(products) < 3 and hasattr(response, 'source_nodes'):
                 for node in response.source_nodes:
                     metadata = node.node.metadata
                     title = metadata.get('title')
                     
-                    # Check if we have detailed info for this product in our cache
                     if title and title in product_lookup and title not in seen_titles:
-                        products.append(product_lookup[title])
-                        seen_titles.add(title)
+                        # Extract the core product name (ignoring variants like ' - Blue' or ' / L')
+                        main_part = title.split('-')[0].split('/')[0].strip().lower()
+                        
+                        # Only add if the core product name is explicitly in the bot's given response
+                        if len(main_part) > 3 and main_part in resp_text.lower():
+                            products.append(product_lookup[title])
+                            seen_titles.add(title)
                     
                     if len(products) >= 3: 
                         break
