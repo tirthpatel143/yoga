@@ -233,55 +233,76 @@ def fetch_order_info(query: str, user_id: str = None) -> str:
     if not ORDER_API_URL:
         return ""
         
-    match = re.search(r'(?:order|pedido)\s*#?\s*([a-zA-Z0-9_-]+)', query, re.IGNORECASE)
+    match = re.search(r'(order|pedido|cart|carrinho)\s*#?\s*([a-zA-Z0-9_-]+)', query, re.IGNORECASE)
     if not match:
         return ""
         
-    order_id = match.group(1)
+    req_type = match.group(1).lower()
+    item_id = match.group(2)
+    is_cart = req_type in ['cart', 'carrinho'] or item_id.startswith('cart_')
+    
     headers = {}
     if X_PUBLISHABLE_KEY:
         headers['x-publishable-api-key'] = X_PUBLISHABLE_KEY
         
     try:
-        # Try getting by ID
-        url = f"{ORDER_API_URL}/{order_id}"
-        resp = requests.get(url, headers=headers)
-        
-        # If order not found by ID, try grabbing by display ID
-        if resp.status_code == 404:
-            url2 = f"{ORDER_API_URL}?display_id={order_id}"
-            # Medusa often requires email along with display_id to fetch orders
-            if user_id:
-                url2 += f"&email={user_id}"
-                
-            resp2 = requests.get(url2, headers=headers)
-            if resp2.status_code == 200:
-                orders = resp2.json().get('orders', [])
-                if orders:
-                    data = orders[0]
-                else:
-                    return f"System Note: No order found for display_id {order_id} and email {user_id}."
+        if is_cart:
+            cart_api_url = ORDER_API_URL.replace('/orders', '/carts')
+            url = f"{cart_api_url}/{item_id}"
+            resp = requests.get(url, headers=headers)
+            
+            if resp.status_code == 200:
+                data = resp.json().get('cart', {})
+                items = []
+                for item in data.get('items', []):
+                    qty = item.get('quantity', 1)
+                    title = item.get('title', 'Item')
+                    items.append(f"{qty}x {title}")
+                    
+                items_str = ", ".join(items) if items else "No items found"
+                return f"System Note: The user (ID: {user_id}) is asking about cart #{item_id}. API Data: Items: {items_str}."
             else:
-                return f"System Note: Could not fetch order. Ensure the User ID (Email) matches the order email."
-        elif resp.status_code == 200:
-            data = resp.json().get('order', {})
+                return f"System Note: Could not fetch cart {item_id}. Status Code: {resp.status_code}"
         else:
-            return ""
+            # Try getting by ID
+            url = f"{ORDER_API_URL}/{item_id}"
+            resp = requests.get(url, headers=headers)
             
-        status = data.get('status', 'unknown')
-        fulfillment = data.get('fulfillment_status', 'unknown')
-        
-        items = []
-        for item in data.get('items', []):
-            qty = item.get('quantity', 1)
-            title = item.get('title', 'Item')
-            items.append(f"{qty}x {title}")
+            # If order not found by ID, try grabbing by display ID
+            if resp.status_code == 404:
+                url2 = f"{ORDER_API_URL}?display_id={item_id}"
+                # Medusa often requires email along with display_id to fetch orders
+                if user_id:
+                    url2 += f"&email={user_id}"
+                    
+                resp2 = requests.get(url2, headers=headers)
+                if resp2.status_code == 200:
+                    orders = resp2.json().get('orders', [])
+                    if orders:
+                        data = orders[0]
+                    else:
+                        return f"System Note: No order found for display_id {item_id} and email {user_id}."
+                else:
+                    return f"System Note: Could not fetch order. Ensure the User ID (Email) matches the order email."
+            elif resp.status_code == 200:
+                data = resp.json().get('order', {})
+            else:
+                return ""
+                
+            status = data.get('status', 'unknown')
+            fulfillment = data.get('fulfillment_status', 'unknown')
             
-        items_str = ", ".join(items) if items else "No items found"
-        return f"System Note: The user (ID: {user_id}) is asking about order #{order_id}. API Data: Status={status}, Fulfillment={fulfillment}. Items: {items_str}."
-        
+            items = []
+            for item in data.get('items', []):
+                qty = item.get('quantity', 1)
+                title = item.get('title', 'Item')
+                items.append(f"{qty}x {title}")
+                
+            items_str = ", ".join(items) if items else "No items found"
+            return f"System Note: The user (ID: {user_id}) is asking about order #{item_id}. API Data: Status={status}, Fulfillment={fulfillment}. Items: {items_str}."
+            
     except Exception as e:
-        print(f"Error fetching order API: {e}")
+        print(f"Error fetching API: {e}")
         return ""
 
 def fetch_all_orders_for_user(user_id: str) -> str:
