@@ -451,12 +451,49 @@ def chat_endpoint(request: ChatRequest):
         specific_order_info = fetch_order_info(user_message, user_id=user_id)
         if specific_order_info:
             system_context += f"{specific_order_info}\n\n"
+
+        # --- Personalization Check for Clothing/Human Products ---
+        is_clothing_query = bool(re.search(r'(dress|clothing|shirt|pants|legging|bra|top|shoe|wear|apparel|clothes|jacket|top|bottom)', user_message.lower()))
+        is_providing_profile = bool(re.search(r'\b(male|female|man|woman|boy|girl|mens|womens)\b', user_message.lower()) or re.search(r'(size|\bxs\b|\bs\b|\bm\b|\bl\b|\bxl\b|\bxxl\b|\bxxxl\b|large|medium|small)', user_message.lower()))
+        
+        user_profile = None
+        if user_id:
+            user_profile = db.get_user_profile(user_id)
+            
+            if not user_profile:
+                if is_clothing_query and not is_providing_profile:
+                    resp_text = "To recommend the best yoga products for you, I need a bit of info first. Could you please tell me:\n\n- Your gender\n- Your usual clothing size for tops and/or bottoms For example: \"I am male, usually size L for tops and 42 for shoes.\""
+                    message_id = db.save_chat_message(request.message, resp_text)
+                    return {
+                        "response": resp_text,
+                        "products": [],
+                        "message_id": message_id,
+                        "follow_ups": []
+                    }
+                elif is_providing_profile:
+                    # Try to extract gender explicitly for better context
+                    gender = "Unknown"
+                    msg_lower = user_message.lower()
+                    if re.search(r'\b(male|man|boy|mens)\b', msg_lower):
+                        gender = "Male"
+                    elif re.search(r'\b(female|woman|girl|womens)\b', msg_lower):
+                        gender = "Female"
+                        
+                    db.save_user_profile(user_id, gender, user_message)
+                    user_profile = {"gender": gender, "size": user_message}
+            
+            if user_profile:
+                system_context += f"System Note: The current user's profile with gender and size details is: Gender - {user_profile['gender']}, Details - '{user_profile['size']}'. CRITICAL: You MUST use this information to filter products. If the user is male, ONLY suggest men's products and DO NOT suggest sports bras, women's leggings, or female tops. If the user is female, suggest female clothing. Filter the catalog explicitly by this gender and size.\n\n"
+        # ---------------------------------------------------------
             
         # Determine if the query is order or cart related
         is_order_related = bool(re.search(r'(order|pedido|cart|carrinho|history|histórico|status|track|rastrear)', user_message, re.IGNORECASE))
 
-        if system_context and is_order_related:
-            system_msg = f"User Account Data:\n{system_context}\nPlease use the above user and order information to answer the user's query.\n\nUser Query: {user_message}"
+        if system_context:
+            if is_order_related:
+                system_msg = f"User Account Data:\n{system_context}\nPlease use the above user and order information to answer the user's query.\n\nUser Query: {user_message}"
+            else:
+                system_msg = f"User Profile Context:\n{system_context}\n\nUser Query: {user_message}"
             response = chat_engine.chat(system_msg)
         else:
             response = chat_engine.chat(user_message)

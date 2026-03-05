@@ -106,12 +106,57 @@ def init_db():
             
             conn.commit()
             
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id TEXT PRIMARY KEY,
+                    gender TEXT,
+                    size TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            print("Table 'user_profiles' checked/created successfully.")
+            conn.commit()
+            
             cur.close()
             conn.close()
         else:
             print("Failed to connect to target database to create table.")
     except Exception as e:
         print(f"Error initializing table: {e}")
+
+def get_user_profile(user_id):
+    try:
+        conn = get_db_connection()
+        if conn:
+            cur = conn.cursor()
+            cur.execute("SELECT gender, size FROM user_profiles WHERE user_id = %s", (user_id,))
+            result = cur.fetchone()
+            cur.close()
+            conn.close()
+            if result:
+                return {"gender": result[0], "size": result[1]}
+    except Exception as e:
+        print(f"Error getting user profile: {e}")
+    return None
+
+def save_user_profile(user_id, gender, size):
+    try:
+        conn = get_db_connection()
+        if conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO user_profiles (user_id, gender, size) 
+                VALUES (%s, %s, %s) 
+                ON CONFLICT (user_id) 
+                DO UPDATE SET gender = EXCLUDED.gender, size = EXCLUDED.size
+            """, (user_id, gender, size))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True
+    except Exception as e:
+        print(f"Error saving user profile: {e}")
+        return False
 
 def save_chat_message(user_message, bot_response):
     """
