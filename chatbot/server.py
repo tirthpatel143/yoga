@@ -63,11 +63,22 @@ def build_product_lookup():
                 if calc.get("calculated_amount"):
                     price = f"R$ {calc['calculated_amount']}"
             
+            # Build per-variant thumbnail map: lowercased variant title -> thumbnail URL
+            variant_images = {}
+            for v in variants:
+                v_title = v.get("title", "")
+                pvi = v.get("product_variant_images")
+                if pvi and isinstance(pvi, dict):
+                    v_thumb = pvi.get("thumbnail")
+                    if v_thumb:
+                        variant_images[v_title.lower()] = v_thumb
+            
             lookup[title] = {
                 "title": title,
                 "price": price,
                 "image": p.get("thumbnail") or (p.get("images")[0]["url"] if p.get("images") else "https://via.placeholder.com/200"),
-                "url": f"https://yogateria.com.br/produto/{p.get('handle', '')}"
+                "url": f"https://test.yogateria.com.br/produto/{p.get('handle', '')}",
+                "variant_images": variant_images  # {variant_title_lower: thumbnail_url}
             }
         return lookup
     except Exception as e:
@@ -483,7 +494,16 @@ def chat_endpoint(request: ChatRequest):
                     user_profile = {"gender": gender, "size": user_message}
             
             if user_profile:
-                system_context += f"System Note: The current user's profile with gender and size details is: Gender - {user_profile['gender']}, Details - '{user_profile['size']}'. CRITICAL: You MUST use this information to filter products. If the user is male, ONLY suggest men's products and DO NOT suggest sports bras, women's leggings, or female tops. If the user is female, suggest female clothing. Filter the catalog explicitly by this gender and size.\n\n"
+                g = user_profile['gender'].lower()
+                sys_msg = f"System Note: The current user's profile with gender and size details is: Gender - {user_profile['gender']}, Details - '{user_profile['size']}'. "
+                sys_msg += "CRITICAL: You MUST use this information to filter clothing products. "
+                if g == 'male':
+                    sys_msg += "The user is MALE. ONLY suggest men's upper and lower clothing. For shirts/camisetas, ONLY suggest the 'T-Shirt' variants. Do NOT suggest 'Baby Look' variants. Do NOT suggest sports bras, women's leggings, or female tops. "
+                elif g == 'female':
+                    sys_msg += "The user is FEMALE. ONLY suggest female clothing. For shirts/camisetas, ONLY suggest the 'Baby Look' variants. Do NOT suggest the 'T-Shirt' variants (which are for men). Suggest women's leggings, tops, and sports bras. "
+                else:
+                    sys_msg += "Filter the catalog explicitly by this gender and size. "
+                system_context += sys_msg + "\n\n"
         # ---------------------------------------------------------
             
         # Determine if the query is order or cart related
@@ -525,27 +545,60 @@ def chat_endpoint(request: ChatRequest):
         if not is_order_related and not is_basic_greeting:
             seen_titles = set()
             
+            # Combined text to scan for variant keywords (user query + bot response)
+            scan_text = (user_message + " " + resp_text).lower()
+            
+            def resolve_variant_image(info):
+                """Pick the best thumbnail: variant-specific if a variant keyword matches scan_text, else general."""
+                variant_images = info.get("variant_images", {})
+                if not variant_images:
+                    return info["image"]
+                # Check each variant title against the combined text
+                for v_title_lower, v_thumb in variant_images.items():
+                    # Match individual words of the variant title (e.g. 'verde alecrim' -> ['verde', 'alecrim'])
+                    words = v_title_lower.split()
+                    if all(w in scan_text for w in words):
+                        return v_thumb
+                return info["image"]  # fallback to general thumbnail
+            
             # 1. Prioritize products whose exact full titles are in the response
             for title, info in product_lookup.items():
                 if len(title) > 4 and title.lower() in resp_text.lower():
-                    products.append(info)
+                    card = dict(info)
+                    card["image"] = resolve_variant_image(info)
+                    products.append(card)
                     seen_titles.add(title)
                 if len(products) >= 3:
                     break
             
             # 2. Check source nodes, but rigorously ensure the bot actually mentioned the product
             if len(products) < 3 and hasattr(response, 'source_nodes'):
+                
+                def get_meaningful_words(text):
+                    words = set(re.findall(r'\b\w+\b', text.lower()))
+                    stops = {'de', 'para', 'e', 'o', 'a', 'com', 'da', 'do', 'em', 'um', 'uma'}
+                    return words - stops
+                
+                resp_words = get_meaningful_words(resp_text)
+                
                 for node in response.source_nodes:
                     metadata = node.node.metadata
                     title = metadata.get('title')
                     
                     if title and title in product_lookup and title not in seen_titles:
                         # Extract the core product name (ignoring variants like ' - Blue' or ' / L')
-                        main_part = title.split('-')[0].split('/')[0].strip().lower()
+                        normalized_title = title.replace('–', '-').replace('—', '-')
+                        main_part = normalized_title.split('-')[0].split('/')[0].strip()
                         
-                        # Only add if the core product name is explicitly in the bot's given response
-                        if len(main_part) > 3 and main_part in resp_text.lower():
-                            products.append(product_lookup[title])
+                        title_words = get_meaningful_words(main_part)
+                        overlap = title_words.intersection(resp_words)
+                        
+                        # Only add if at least 3 meaningful words overlap, or if title is short and we got most of it
+                        if len(overlap) >= 3 or (len(title_words) > 0 and len(overlap) / len(title_words) >= 0.75):
+                            info = product_lookup[title]
+                            card = dict(info)
+                            card["image"] = resolve_variant_image(info)
+                            products.append(card)
                             seen_titles.add(title)
                     
                     if len(products) >= 3: 

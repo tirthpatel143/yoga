@@ -138,8 +138,9 @@ async function sendMessage() {
             const productsContainer = document.createElement('div');
             productsContainer.className = 'products-container';
 
-            // Insert cards BEFORE the text bubble
-            aiMsg.insertBefore(productsContainer, bubble);
+            // Insert cards AFTER the text bubble
+            // Insert before any feedback container if present, or just use insertBefore with nextSibling
+            aiMsg.insertBefore(productsContainer, bubble.nextSibling);
 
             // Add cards one by one with a small delay
             for (const product of data.products) {
