@@ -30,7 +30,7 @@ def init_db():
     # Step 1: Create Database if it doesn't exist
     try:
         # Connect to default 'postgres' database to manage databases
-        conn = get_db_connection(dbname='postgres')
+        conn = get_db_connection(dbname='Yogateria')
         if conn:
             conn.autocommit = True
             cur = conn.cursor()

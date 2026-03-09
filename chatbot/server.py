@@ -10,7 +10,7 @@ import json
 import db
 import requests
 import re
-from config import ORDER_API_URL, X_PUBLISHABLE_KEY
+from config import ORDER_API_URL, X_PUBLISHABLE_KEY, PRODUCT_DATA_PATH
 
 # Fix for "asyncio.run() cannot be called from a running event loop"
 nest_asyncio.apply()
@@ -39,36 +39,172 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global instances
+ # Global instances
 chat_engine = None
 product_lookup = {}
+product_variants = {}
+
+def _canonical_color_terms(text: str):
+    """Map raw color/design strings to a small set of canonical color names."""
+    if not text:
+        return set()
+    t = text.lower()
+    color_map = {
+        "green": ["green", "verde", "esmeralda", "verde oliva", "verde alecrim", "verde floresta", "verde musgo", "verde militar", "verde escuro", "verde pistache"],
+        "blue": ["blue", "azul", "azul escuro", "azul claro", "azul céu", "azul índigo", "azul marinho", "azul mar", "azul / aqua"],
+        "black": ["black", "preto", "preto e branco", "preto e verde"],
+        "white": ["white", "branco", "offwhite"],
+        "red": ["red", "vermelho", "vermelho / laranja", "amora", "amora / rosa", "rosa", "rosa chá", "rosa goiaba", "rosa orquídea", "bordô", "vinho"],
+        "beige": ["beige", "bege", "bege escuro", "bege e azul", "madurai / bege"],
+        "purple": ["purple", "roxo", "lilás", "lilás / azul"],
+        "pink": ["pink", "pink / roxo"],
+        "brown": ["brown", "marrom", "café", "cacau", "cinza eucalipto", "telha", "terracota"],
+        "grey": ["grey", "gray", "cinza", "cinza claro", "cinza / ameixa", "cinza nude", "grafite"],
+        "gold": ["gold", "dourado", "açafrão", "amarelo", "amarelo ocre"],
+        "turquoise": ["turquoise", "turquesa", "petróleo", "oceano"],
+        "orange": ["orange", "laranja"],
+        "nude": ["nude"],
+        "blueberry": ["blueberry / vanilla"],
+        "mandala": ["mandala / azul escuro"],
+        "paisley": ["paisley / petróleo"],
+        "raja": ["raja / nude"],
+        "mayuri": ["mayuri / bordô"],
+        "madurai": ["madurai / bege"],
+        "leaves": ["leaves / esmeralda"],
+        "lotus": ["lótus / amora"],
+        "bandhani": ["bandhani / preto e branco"],
+        "amazonia": ["amazônia / preto e verde"],
+        "caatinga": ["caatinga / pêssego e azul"],
+        "atlantica": ["atlântica / azul e petróleo"],
+        "cerrado": ["cerrado / ameixa e rosê"],
+        "pantanal": ["pantanal / bege e azul"],
+        "ameixa": ["ameixa"],
+        "aqua": ["aqua"],
+        "yellow": ["yellow", "amarelo", "amarelo ocre", "açafrão"],
+    }
+    result = set()
+    for canon, aliases in color_map.items():
+        for a in aliases:
+            if a in t:
+                result.add(canon)
+                break
+    return result
+
+
+def _extract_colors_from_query(text: str):
+    """Return canonical color names mentioned in user query/response."""
+    if not text:
+        return set()
+    return _canonical_color_terms(text)
+
 
 def build_product_lookup():
-    """Build a cache of product details for the UI cards"""
+    """Build caches of product and variant details for the UI cards."""
+    global product_variants
     try:
-        from config import PRODUCT_DATA_PATH
+        if not PRODUCT_DATA_PATH:
+            print("PRODUCT_DATA_PATH not set; skipping product lookup build.")
+            return {}
+
         with open(PRODUCT_DATA_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         lookup = {}
+        product_variants = {}
+
         for p in data.get("products", []):
             title = p.get("title")
-            if not title: continue
-            
-            # Get first variant price
+            if not title:
+                continue
+
+            handle = p.get("handle", "")
+            base_url = f"https://test.yogateria.com.br/produto/{handle}" if handle else "https://test.yogateria.com.br/"
+
+            # Base product card (fallback when no specific variant is requested)
             price = "Available on site"
             variants = p.get("variants", [])
             if variants:
                 calc = variants[0].get("calculated_price", {})
                 if calc.get("calculated_amount"):
                     price = f"R$ {calc['calculated_amount']}"
-            
+
             lookup[title] = {
                 "title": title,
                 "price": price,
                 "image": p.get("thumbnail") or (p.get("images")[0]["url"] if p.get("images") else "https://via.placeholder.com/200"),
-                "url": f"https://yogateria.com.br/produto/{p.get('handle', '')}"
+                "url": base_url,
             }
+
+            # Build variant-level entries keyed per product
+            key = title.lower()
+            product_variants[key] = []
+
+            # Map variant_id -> variant object for URL parameters if needed
+            variant_by_id = {v.get("id"): v for v in variants if v.get("id")}
+            
+            # Create a mapping from option values to variants with their thumbnails
+            variant_option_map = {}
+            for v in variants:
+                # Get variant thumbnail from product_variant_images
+                variant_thumb = None
+                pvi = v.get("product_variant_images", {})
+                if pvi and isinstance(pvi, dict):
+                    variant_thumb = pvi.get("thumbnail")
+                
+                # Map option values to this variant
+                v_options = v.get("options", [])
+                for v_opt in v_options:
+                    v_opt_value = v_opt.get("value", "")
+                    if v_opt_value:
+                        variant_option_map[v_opt_value] = {
+                            "thumbnail": variant_thumb,
+                            "variant_id": v.get("id"),
+                            "price": v.get("calculated_price", {}).get("calculated_amount")
+                        }
+
+            # Options can be "cor" or "design" according to user
+            for opt in p.get("options", []):
+                opt_title = (opt.get("title") or "").strip().lower()
+                if opt_title not in ("cor", "design"):
+                    continue
+
+                for val in opt.get("values", []):
+                    raw_value = val.get("value") or ""
+                    if not raw_value:
+                        continue
+
+                    colors = _canonical_color_terms(raw_value)
+                    
+                    # Get variant-specific thumbnail and details
+                    variant_info = variant_option_map.get(raw_value, {})
+                    thumb = variant_info.get("thumbnail") or lookup[title]["image"]
+                    variant_id = variant_info.get("variant_id")
+                    variant_price = f"R$ {variant_info['price']}" if variant_info.get("price") else price
+
+                    # Build a variant-specific URL
+                    # Try multiple URL patterns that Medusa/Next.js storefronts commonly use:
+                    # Pattern 1: Query parameter ?variant=id
+                    # Pattern 2: Hash fragment #variant-id (for client-side routing)
+                    # Pattern 3: Just base URL if the frontend handles it via state
+                    variant_url = base_url
+                    if variant_id:
+                        # Most Next.js Medusa storefronts handle variants client-side
+                        # Try hash-based routing which is common for SPAs
+                        variant_url = f"{base_url}#variant={variant_id}"
+                        print(f"[VARIANT URL DEBUG] Product: {title}, Color: {raw_value}, Variant ID: {variant_id}, URL: {variant_url}")
+
+                    product_variants[key].append(
+                        {
+                            "title": title,
+                            "price": variant_price,
+                            "image": thumb,
+                            "url": variant_url,
+                            "variant_id": variant_id,  # Include variant_id for frontend
+                            "variant_label": raw_value,
+                            "colors": list(colors) if colors else [],
+                        }
+                    )
+
         return lookup
     except Exception as e:
         print(f"Lookup Error: {e}")
@@ -489,6 +625,46 @@ def chat_endpoint(request: ChatRequest):
         # Determine if the query is order or cart related
         is_order_related = bool(re.search(r'(order|pedido|cart|carrinho|history|histórico|status|track|rastrear)', user_message, re.IGNORECASE))
 
+        # --- Color-specific variant filter context ---
+        # If the user is asking about colors (e.g., green/blue mat), provide
+        # the LLM with a clear mapping of allowed variants so it doesn't
+        # describe or invent other colors for this response.
+        requested_colors_for_llm = set()
+        if not is_order_related:
+            requested_colors_for_llm = _extract_colors_from_query(user_message)
+
+        if requested_colors_for_llm:
+            try:
+                color_lines = []
+                max_products = 20
+                for title_lower, variants in list(product_variants.items())[:max_products]:
+                    matching = []
+                    for v in variants:
+                        v_colors = set(v.get("colors") or [])
+                        if v_colors & requested_colors_for_llm:
+                            matching.append(v)
+                    if not matching:
+                        continue
+
+                    human_title = next((t for t in product_lookup.keys() if t.lower() == title_lower), title_lower)
+                    labels = ", ".join(f"'{v.get('variant_label')}'" for v in matching)
+                    color_lines.append(f"- {human_title}: allowed variants for this query -> {labels}")
+
+                if color_lines:
+                    color_names = ", ".join(sorted(list(requested_colors_for_llm)))
+                    color_note = (
+                        f"System Note: The user explicitly requested the following color(s) for this query: {color_names}. "
+                        "You MUST only recommend product variants whose color matches these canonical colors, "
+                        "based on the mapping below, and you MUST NOT mention other color options or say they are available in this response.\n" 
+                        "Only use the listed variants for color-sensitive suggestions. If no suitable variant exists, say that color is not available and do not invent it.\n" 
+                        + "Relevant color-constrained variants for this query:\n" 
+                        + "\n".join(color_lines)
+                        + "\n\n"
+                    )
+                    system_context = color_note + system_context
+            except Exception as e:
+                print(f"Color context build error: {e}")
+
         if system_context:
             if is_order_related:
                 system_msg = f"User Account Data:\n{system_context}\nPlease use the above user and order information to answer the user's query.\n\nUser Query: {user_message}"
@@ -524,31 +700,78 @@ def chat_endpoint(request: ChatRequest):
         
         if not is_order_related and not is_basic_greeting:
             seen_titles = set()
-            
+
+            # Detect color intent from user query (primary) and response text (fallback)
+            requested_colors = _extract_colors_from_query(user_message)
+            if not requested_colors:
+                requested_colors = _extract_colors_from_query(resp_text)
+
+            if requested_colors:
+                print(f"[COLOR QUERY] Requested canonical colors: {sorted(list(requested_colors))}")
+
+            # Helper: choose variant matching requested colors if available
+            def pick_card_for_title(title: str):
+                base_info = product_lookup.get(title)
+                if not base_info:
+                    return None
+
+                # If no color requested, just return base card
+                if not requested_colors:
+                    print(f"[COLOR PICK] No color requested. Using base product card for '{title}'.")
+                    return base_info
+
+                variants_for_product = product_variants.get(title.lower()) or []
+                # Prefer first variant whose canonical colors intersect the query colors
+                for v in variants_for_product:
+                    v_colors = set(v.get("colors") or [])
+                    if v_colors & requested_colors:
+                        merged = base_info.copy()
+                        merged.update(
+                            {
+                                "image": v.get("image") or base_info.get("image"),
+                                "url": v.get("url") or base_info.get("url"),
+                                "variant_id": v.get("variant_id"),  # Pass variant_id to frontend
+                                "variant_label": v.get("variant_label"),
+                            }
+                        )
+                        print(
+                            f"[COLOR PICK] Matched variant for '{title}' -> variant_label='{v.get('variant_label')}', "
+                            f"variant_id='{v.get('variant_id')}', colors={sorted(list(v_colors))}, url={merged.get('url')}"
+                        )
+                        return merged
+
+                # Fallback: no matching variant, use base card
+                print(f"[COLOR PICK] No matching variant colors for '{title}'. Using base card.")
+                return base_info
+
             # 1. Prioritize products whose exact full titles are in the response
-            for title, info in product_lookup.items():
+            for title in product_lookup.keys():
                 if len(title) > 4 and title.lower() in resp_text.lower():
-                    products.append(info)
-                    seen_titles.add(title)
+                    card = pick_card_for_title(title)
+                    if card:
+                        products.append(card)
+                        seen_titles.add(title)
                 if len(products) >= 3:
                     break
-            
+
             # 2. Check source nodes, but rigorously ensure the bot actually mentioned the product
             if len(products) < 3 and hasattr(response, 'source_nodes'):
                 for node in response.source_nodes:
                     metadata = node.node.metadata
                     title = metadata.get('title')
-                    
+
                     if title and title in product_lookup and title not in seen_titles:
                         # Extract the core product name (ignoring variants like ' - Blue' or ' / L')
                         main_part = title.split('-')[0].split('/')[0].strip().lower()
-                        
+
                         # Only add if the core product name is explicitly in the bot's given response
                         if len(main_part) > 3 and main_part in resp_text.lower():
-                            products.append(product_lookup[title])
-                            seen_titles.add(title)
-                    
-                    if len(products) >= 3: 
+                            card = pick_card_for_title(title)
+                            if card:
+                                products.append(card)
+                                seen_titles.add(title)
+
+                    if len(products) >= 3:
                         break
 
         return {

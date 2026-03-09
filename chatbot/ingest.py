@@ -4,7 +4,6 @@ import re
 import qdrant_client
 from llama_index.core import Document, Settings, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.embeddings.huggingface_api import HuggingFaceInferenceAPIEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 from config import PRODUCT_DATA_PATH, QDRANT_URL, COLLECTION_NAME, HF_TOKEN, EMBED_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, PRODUCT_API_URL, X_PUBLISHABLE_KEY
@@ -54,6 +53,7 @@ def load_products():
         prices = []
         currencies = set()
         variant_details = []
+        variant_thumbnails = {}  # Map variant title to thumbnail
         
         for variant in variants:
             calc_price = variant.get("calculated_price", {})
@@ -69,6 +69,13 @@ def load_products():
             v_title = variant.get("title")
             if v_title:
                 variant_details.append(v_title)
+                
+                # Extract variant-specific thumbnail from product_variant_images
+                pvi = variant.get("product_variant_images", {})
+                if pvi and isinstance(pvi, dict):
+                    v_thumb = pvi.get("thumbnail")
+                    if v_thumb:
+                        variant_thumbnails[v_title] = v_thumb
         
         price_text = ""
         if prices:

@@ -1,8 +1,6 @@
 import qdrant_client
 from llama_index.core import VectorStoreIndex, Settings, PromptTemplate
 from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.llms.huggingface_api import HuggingFaceInferenceAPI
-from llama_index.embeddings.huggingface_api import HuggingFaceInferenceAPIEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 from config import (

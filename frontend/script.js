@@ -51,6 +51,7 @@ function createProductCard(product) {
         <div class="product-info">
             <h3 class="product-title">${product.title}</h3>
             <span class="product-price">${product.price}</span>
+            ${product.variant_label ? `<span class="product-variant">${product.variant_label}</span>` : ''}
             <a href="${product.url}" target="_blank" class="view-btn">View Product</a>
         </div>
     `;
