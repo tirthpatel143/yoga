@@ -133,27 +133,26 @@ async function sendMessage() {
         // Update thinking message
         const bubble = aiMsg.querySelector('.bubble');
 
-        // 4. Show Product Cards if available - BEFORE answer is shown (and visually above)
+        // Step 1: Show product cards FIRST (at the top of the AI reply)
         if (data.products && data.products.length > 0) {
             const productsContainer = document.createElement('div');
             productsContainer.className = 'products-container';
 
-            // Insert cards AFTER the text bubble
-            // Insert before any feedback container if present, or just use insertBefore with nextSibling
-            aiMsg.insertBefore(productsContainer, bubble.nextSibling);
+            // Insert BEFORE the bubble so cards appear above the answer text
+            aiMsg.insertBefore(productsContainer, bubble);
 
-            // Add cards one by one with a small delay
+            // Add cards one by one with a small stagger
             for (const product of data.products) {
                 const card = createProductCard(product);
                 productsContainer.appendChild(card);
                 scrollToBottom();
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 150));
             }
         }
 
-        // Render Markdown Response directly
-        // Using marked.parse() ensures proper HTML rendering (including tables) and preserves spaces
+        // Step 2: Render the answer text BELOW the cards
         bubble.innerHTML = marked.parse(data.response);
+        scrollToBottom();
 
         // Add feedback buttons if we have a message ID
         if (data.message_id) {
