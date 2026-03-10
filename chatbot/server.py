@@ -12,6 +12,53 @@ import requests
 import re
 from config import ORDER_API_URL, X_PUBLISHABLE_KEY
 
+# ---------------------------------------------------------------------------
+# Color alias map: canonical color group -> all aliases (Portuguese + English)
+# Used to match the user's requested color to the correct product variant.
+# ---------------------------------------------------------------------------
+COLOR_MAP = {
+    "green":      ["green", "verde", "esmeralda", "verde oliva", "verde alecrim", "verde floresta", "verde musgo", "verde militar", "verde escuro", "verde pistache"],
+    "blue":       ["blue", "azul", "azul escuro", "azul claro", "azul céu", "azul índigo", "azul marinho", "azul mar", "azul / aqua"],
+    "black":      ["black", "preto", "preto e branco", "preto e verde"],
+    "white":      ["white", "branco", "offwhite"],
+    "red":        ["red", "vermelho", "vermelho / laranja", "amora", "amora / rosa", "rosa", "rosa chá", "rosa goiaba", "rosa orquídea", "bordô", "vinho"],
+    "beige":      ["beige", "bege", "bege escuro", "bege e azul", "madurai / bege"],
+    "purple":     ["purple", "roxo", "lilás", "lilás / azul"],
+    "pink":       ["pink", "pink / roxo"],
+    "brown":      ["brown", "marrom", "café", "cacau", "cinza eucalipto", "telha", "terracota"],
+    "grey":       ["grey", "gray", "cinza", "cinza claro", "cinza / ameixa", "cinza nude", "grafite"],
+    "gold":       ["gold", "dourado", "açafrão", "amarelo", "amarelo ocre"],
+    "turquoise":  ["turquoise", "turquesa", "petróleo", "oceano"],
+    "orange":     ["orange", "laranja"],
+    "nude":       ["nude"],
+    "blueberry":  ["blueberry / vanilla"],
+    "mandala":    ["mandala / azul escuro"],
+    "paisley":    ["paisley / petróleo"],
+    "raja":       ["raja / nude"],
+    "mayuri":     ["mayuri / bordô"],
+    "madurai":    ["madurai / bege"],
+    "leaves":     ["leaves / esmeralda"],
+    "lotus":      ["lótus / amora"],
+    "bandhani":   ["bandhani / preto e branco"],
+    "amazonia":   ["amazônia / preto e verde"],
+    "caatinga":   ["caatinga / pêssego e azul"],
+    "atlantica":  ["atlântica / azul e petróleo"],
+    "cerrado":    ["cerrado / ameixa e rosê"],
+    "pantanal":   ["pantanal / bege e azul"],
+    "ameixa":     ["ameixa"],
+    "aqua":       ["aqua"],
+    "yellow": ["yellow", "amarelo", "amarelo ocre", "açafrão"],
+}
+
+# Reverse map: lowercased alias -> color_group  (e.g. "preto" -> "black")
+_ALIAS_TO_GROUP = {alias.lower(): group for group, aliases in COLOR_MAP.items() for alias in aliases}
+
+# All aliases sorted by length DESC so longer phrases are matched before shorter ones
+# (prevents "azul" from matching when user said "azul céu")
+_SORTED_ALIASES = sorted(_ALIAS_TO_GROUP.keys(), key=len, reverse=True)
+
+# ---------------------------------------------------------------------------
+
 # Fix for "asyncio.run() cannot be called from a running event loop"
 nest_asyncio.apply()
 
@@ -549,17 +596,41 @@ def chat_endpoint(request: ChatRequest):
             scan_text = (user_message + " " + resp_text).lower()
             
             def resolve_variant_image(info):
-                """Pick the best thumbnail: variant-specific if a variant keyword matches scan_text, else general."""
+                """
+                Use COLOR_MAP to detect what color the user wants, then find the variant
+                of this product that belongs to that color group.
+                Falls back to the general product thumbnail if no color match is found.
+                """
                 variant_images = info.get("variant_images", {})
                 if not variant_images:
                     return info["image"]
-                # Check each variant title against the combined text
-                for v_title_lower, v_thumb in variant_images.items():
-                    # Match individual words of the variant title (e.g. 'verde alecrim' -> ['verde', 'alecrim'])
-                    words = v_title_lower.split()
-                    if all(w in scan_text for w in words):
-                        return v_thumb
-                return info["image"]  # fallback to general thumbnail
+
+                # --- Step 1: Detect the user's intended color group from scan_text ---
+                # Iterate aliases longest-first so "azul céu" matches before "azul"
+                detected_group = None
+                for alias in _SORTED_ALIASES:
+                    if alias in scan_text:
+                        detected_group = _ALIAS_TO_GROUP[alias]
+                        break
+
+                if detected_group:
+                    # --- Step 2: Find a variant of THIS product in that color group ---
+                    # All aliases that belong to the detected color group
+                    group_aliases = [a.lower() for a in COLOR_MAP[detected_group]]
+
+                    # Check if any of this product's variant titles belong to the color group
+                    for v_title_lower, v_thumb in variant_images.items():
+                        if v_title_lower in group_aliases:
+                            return v_thumb  # ✅ Exact group match
+
+                    # Partial fallback: check if any alias word appears in the variant title
+                    for v_title_lower, v_thumb in variant_images.items():
+                        for alias in group_aliases:
+                            if alias in v_title_lower or v_title_lower in alias:
+                                return v_thumb
+
+                # --- Step 3: No color match → fall back to general product thumbnail ---
+                return info["image"]
             
             # 1. Prioritize products whose exact full titles are in the response
             for title, info in product_lookup.items():
