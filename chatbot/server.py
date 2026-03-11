@@ -10,6 +10,7 @@ import json
 import db
 import requests
 import re
+import urllib.parse
 from config import ORDER_API_URL, X_PUBLISHABLE_KEY
 
 # ---------------------------------------------------------------------------
@@ -101,14 +102,36 @@ def build_product_lookup():
                 if pvi and isinstance(pvi, dict):
                     v_thumb = pvi.get("thumbnail")
                     if v_thumb:
-                        variant_images[v_title.lower()] = v_thumb
+                        variant_images[v_title.lower()] = {"image": v_thumb, "title": v_title}
             
+            # Extract all options for dynamic URL parameters
+            options_dict = {}
+            for opt in p.get("options", []):
+                o_title = opt.get("title")
+                o_values = opt.get("values", [])
+                if o_title and o_values:
+                    # Capture the first value as the default
+                    options_dict[o_title] = o_values[0].get("value")
+            
+            handle = p.get('handle', '')
+            # Heuristic for category-based path prefix
+            path_prefix = "produto"
+            if "tapete" in handle.lower() or "tapete" in title.lower():
+                path_prefix = "tapete-de-yoga"
+            elif "almofada" in handle.lower() or "zafu" in handle.lower() or "almofada" in title.lower():
+                path_prefix = "almofadas-de-yoga"
+            elif "bolsa" in handle.lower() or "bolsa" in title.lower():
+                path_prefix = "bolsas-para-yoga"
+
             lookup[title] = {
                 "title": title,
+                "handle": handle,
+                "path_prefix": path_prefix,
                 "price": price,
                 "image": p.get("thumbnail") or (p.get("images")[0]["url"] if p.get("images") else "https://via.placeholder.com/200"),
-                "url": f"https://test.yogateria.com.br/produto/{p.get('handle', '')}",
-                "variant_images": variant_images  # {variant_title_lower: thumbnail_url}
+                "url": f"https://test.yogateria.com.br/{path_prefix}/{handle}",
+                "variant_images": variant_images,  # {variant_title_lower: {"image": thumbnail_url, "title": original_title}}
+                "options": options_dict
             }
         return lookup
     except Exception as e:
@@ -601,10 +624,10 @@ def chat_endpoint(request: ChatRequest):
                 """
                 Use COLOR_MAP to detect what color the user wants, then find the variant
                 of this product that belongs to that color group.
-                Returns a tuple (image_url, matched_color_group, matched_variant_title).
+                Returns a tuple (image_url, matched_color_group, matched_original_variant_title).
                 Falls back to the general product thumbnail if no color match is found.
                 """
-                variant_images = info.get("variant_images", {})
+                variant_images = info.get("variant_images", {}) # {lower: {"image": thumbnail_url, "title": original_title}}
                 if not variant_images:
                     return info["image"], None, None
 
@@ -612,34 +635,63 @@ def chat_endpoint(request: ChatRequest):
                     group_aliases = [a.lower() for a in COLOR_MAP[requested_color_group]]
 
                     # Step 1: Exact match — variant title IS one of the group aliases
-                    for v_title_lower, v_thumb in variant_images.items():
+                    for v_title_lower, v_data in variant_images.items():
                         if v_title_lower in group_aliases:
+                            v_thumb = v_data["image"]
+                            v_title_orig = v_data["title"]
                             print(f"[Color Debug]   exact match: '{v_title_lower}' → {v_thumb[:60]}")
-                            return v_thumb, requested_color_group, v_title_lower
+                            return v_thumb, requested_color_group, v_title_orig
 
                     # Step 2: Substring match — any alias keyword appears in the variant title
-                    # (e.g. alias='roxo' found inside variant 'pink / roxo')
-                    for v_title_lower, v_thumb in variant_images.items():
+                    for v_title_lower, v_data in variant_images.items():
                         for alias in group_aliases:
                             if alias in v_title_lower:
+                                v_thumb = v_data["image"]
+                                v_title_orig = v_data["title"]
                                 print(f"[Color Debug]   substring match: alias='{alias}' in variant='{v_title_lower}'")
-                                return v_thumb, requested_color_group, v_title_lower
+                                return v_thumb, requested_color_group, v_title_orig
 
                     # Step 3: Reverse substring — variant title is contained in an alias
-                    for v_title_lower, v_thumb in variant_images.items():
+                    for v_title_lower, v_data in variant_images.items():
                         for alias in group_aliases:
                             if v_title_lower in alias:
+                                v_thumb = v_data["image"]
+                                v_title_orig = v_data["title"]
                                 print(f"[Color Debug]   reverse match: variant='{v_title_lower}' in alias='{alias}'")
-                                return v_thumb, requested_color_group, v_title_lower
+                                return v_thumb, requested_color_group, v_title_orig
 
                     print(f"[Color Debug]   no variant match for group '{requested_color_group}'. Available: {list(variant_images.keys())}")
                     # Product doesn't have this color — still return default image but note no color match
                     return info["image"], None, None
 
-                # No color requested → fall back to general product thumbnail, expose all colors
-                all_colors = list(variant_images.keys())[:5]  # first 5 variant names
+                # No color requested → fall back to general product thumbnail
                 return info["image"], None, None
-            
+
+            def construct_dynamic_url(info, matched_variant_title):
+                """
+                Constructs the dynamic URL with query parameters from product options.
+                Matched variant title (color) overrides the default color parameter.
+                """
+                handle = info.get("handle", "")
+                path_prefix = info.get("path_prefix", "produto")
+                options = info.get("options", {}).copy()
+                
+                # If we have a detected color variant, update the URL parameters
+                if matched_variant_title:
+                    # User expects 'Cor' as the parameter key in the example
+                    # If the tech option is 'Design' or 'Cor', we use 'Cor' as the canonical URL parameter
+                    if "Cor" in options:
+                        options["Cor"] = matched_variant_title
+                    elif "Design" in options:
+                        options["Cor"] = matched_variant_title
+                        del options["Design"] # map Design -> Cor for the URL
+                    else:
+                        options["Cor"] = matched_variant_title
+                
+                # Encode all options as query parameters
+                params = urllib.parse.urlencode(options)
+                return f"https://test.yogateria.com.br/{path_prefix}/{handle}?{params}"
+
             def get_meaningful_words(text):
                 words = set(re.findall(r'\b\w+\b', text.lower()))
                 stops = {'de', 'para', 'e', 'o', 'a', 'com', 'da', 'do', 'em', 'um', 'uma', 'é', 'os', 'as', 'no', 'na', 'por', 'que', 'se'}
@@ -654,18 +706,20 @@ def chat_endpoint(request: ChatRequest):
                     continue
                 if len(title) > 4 and title.lower() in resp_lower:
                     card = dict(info)
-                    img, matched_color, matched_variant = resolve_variant_image(info)
+                    img, matched_color, matched_variant_title = resolve_variant_image(info)
                     card["image"] = img
                     card["color"] = matched_color  # e.g. "black", "green", or None
-                    card["variant"] = matched_variant  # e.g. "preto", "verde floresta", or None
+                    card["variant"] = matched_variant_title  # original case title
                     card["available_colors"] = list(info.get("variant_images", {}).keys())
+                    card["url"] = construct_dynamic_url(info, matched_variant_title)
+                    
                     # Skip this card if color was requested but product has no matching variant
                     if requested_color_group and not matched_color:
                         print(f"[Card] Skipping '{title}' — no {requested_color_group} variant available")
                         continue
                     products.append(card)
                     seen_titles.add(title)
-                    print(f"[Card] Exact title match: '{title}' color='{matched_color}' variant='{matched_variant}'")
+                    print(f"[Card] Exact title match: '{title}' color='{matched_color}' variant='{matched_variant_title}'")
                 if len(products) >= 3:
                     break
 
@@ -693,11 +747,13 @@ def chat_endpoint(request: ChatRequest):
                     if title in seen_titles:
                         continue
                     card = dict(info)
-                    img, matched_color, matched_variant = resolve_variant_image(info)
+                    img, matched_color, matched_variant_title = resolve_variant_image(info)
                     card["image"] = img
                     card["color"] = matched_color
-                    card["variant"] = matched_variant
+                    card["variant"] = matched_variant_title
                     card["available_colors"] = list(info.get("variant_images", {}).keys())
+                    card["url"] = construct_dynamic_url(info, matched_variant_title)
+                    
                     # Skip if color was requested but product doesn't have that color
                     if requested_color_group and not matched_color:
                         print(f"[Card] Fuzzy skip '{title}' — no {requested_color_group} variant")
@@ -724,11 +780,13 @@ def chat_endpoint(request: ChatRequest):
                         if len(overlap) >= 3 or (len(title_words) > 0 and len(overlap) / len(title_words) >= 0.75):
                             info = product_lookup[title]
                             card = dict(info)
-                            img, matched_color, matched_variant = resolve_variant_image(info)
+                            img, matched_color, matched_variant_title = resolve_variant_image(info)
                             card["image"] = img
                             card["color"] = matched_color
-                            card["variant"] = matched_variant
+                            card["variant"] = matched_variant_title
                             card["available_colors"] = list(info.get("variant_images", {}).keys())
+                            card["url"] = construct_dynamic_url(info, matched_variant_title)
+                            
                             # Skip if color was requested but product doesn't have that color
                             if requested_color_group and not matched_color:
                                 print(f"[Card] Source skip '{title}' — no {requested_color_group} variant")
