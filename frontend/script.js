@@ -41,13 +41,48 @@ function createMessage(content, role = 'user') {
     return messageDiv;
 }
 
+// Map color group names to CSS-friendly colors for swatches
+const COLOR_SWATCH_MAP = {
+    black: '#1a1a1a',
+    white: '#f5f5f5',
+    red: '#c0392b',
+    blue: '#2980b9',
+    green: '#27ae60',
+    yellow: '#f1c40f',
+    gold: '#d4ac0d',
+    purple: '#8e44ad',
+    pink: '#e91e8c',
+    brown: '#795548',
+    grey: '#9e9e9e',
+    gray: '#9e9e9e',
+    beige: '#d2b48c',
+    turquoise: '#1abc9c',
+    orange: '#e67e22',
+    nude: '#c8a882',
+};
+
 // Helper: Create product card
 function createProductCard(product) {
     const card = document.createElement('div');
     card.className = 'product-card';
 
+    // Build color badge HTML if a color was matched
+    let colorBadgeHtml = '';
+    if (product.color) {
+        const swatchColor = COLOR_SWATCH_MAP[product.color] || '#888';
+        const variantLabel = product.variant
+            ? product.variant.charAt(0).toUpperCase() + product.variant.slice(1)
+            : product.color.charAt(0).toUpperCase() + product.color.slice(1);
+        colorBadgeHtml = `
+            <div class="color-badge">
+                <span class="color-swatch" style="background:${swatchColor}"></span>
+                <span class="color-label">${variantLabel}</span>
+            </div>`;
+    }
+
     card.innerHTML = `
         <img src="${product.image}" alt="${product.title}" class="product-image">
+        ${colorBadgeHtml}
         <div class="product-info">
             <h3 class="product-title">${product.title}</h3>
             <span class="product-price">${product.price}</span>

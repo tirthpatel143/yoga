@@ -166,6 +166,42 @@ header {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     transition: var(--transition);
     animation: slideIn 0.5s ease-out;
+    position: relative;
+}
+
+/* Color badge overlay on product cards */
+.color-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0, 0, 0, 0.70);
+    backdrop-filter: blur(6px);
+    border-radius: 20px;
+    padding: 4px 10px 4px 6px;
+    z-index: 2;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.color-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.5);
+    flex-shrink: 0;
+}
+
+.color-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    text-transform: capitalize;
 }
 
 @keyframes slideIn {

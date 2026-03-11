@@ -17,37 +17,20 @@ from config import ORDER_API_URL, X_PUBLISHABLE_KEY
 # Used to match the user's requested color to the correct product variant.
 # ---------------------------------------------------------------------------
 COLOR_MAP = {
-    "green":      ["green", "verde", "esmeralda", "verde oliva", "verde alecrim", "verde floresta", "verde musgo", "verde militar", "verde escuro", "verde pistache"],
-    "blue":       ["blue", "azul", "azul escuro", "azul claro", "azul céu", "azul índigo", "azul marinho", "azul mar", "azul / aqua"],
-    "black":      ["black", "preto", "preto e branco", "preto e verde"],
-    "white":      ["white", "branco", "offwhite"],
-    "red":        ["red", "vermelho", "vermelho / laranja", "amora", "amora / rosa", "rosa", "rosa chá", "rosa goiaba", "rosa orquídea", "bordô", "vinho"],
-    "beige":      ["beige", "bege", "bege escuro", "bege e azul", "madurai / bege"],
-    "purple":     ["purple", "roxo", "lilás", "lilás / azul"],
-    "pink":       ["pink", "pink / roxo"],
-    "brown":      ["brown", "marrom", "café", "cacau", "cinza eucalipto", "telha", "terracota"],
-    "grey":       ["grey", "gray", "cinza", "cinza claro", "cinza / ameixa", "cinza nude", "grafite"],
-    "gold":       ["gold", "dourado", "açafrão", "amarelo", "amarelo ocre"],
-    "turquoise":  ["turquoise", "turquesa", "petróleo", "oceano"],
-    "orange":     ["orange", "laranja"],
-    "nude":       ["nude"],
-    "blueberry":  ["blueberry / vanilla"],
-    "mandala":    ["mandala / azul escuro"],
-    "paisley":    ["paisley / petróleo"],
-    "raja":       ["raja / nude"],
-    "mayuri":     ["mayuri / bordô"],
-    "madurai":    ["madurai / bege"],
-    "leaves":     ["leaves / esmeralda"],
-    "lotus":      ["lótus / amora"],
-    "bandhani":   ["bandhani / preto e branco"],
-    "amazonia":   ["amazônia / preto e verde"],
-    "caatinga":   ["caatinga / pêssego e azul"],
-    "atlantica":  ["atlântica / azul e petróleo"],
-    "cerrado":    ["cerrado / ameixa e rosê"],
-    "pantanal":   ["pantanal / bege e azul"],
-    "ameixa":     ["ameixa"],
-    "aqua":       ["aqua"],
-    "yellow": ["yellow", "amarelo", "amarelo ocre", "açafrão"],
+    "green":      ["green", "verde", "esmeralda", "verde oliva", "verde alecrim", "verde floresta", "verde musgo", "verde militar", "verde escuro", "verde pistache", "verde / menta", "leaves / esmeralda", "verde água", "verde áqua", "verdes"],
+    "blue":       ["blue", "azul", "azul escuro", "azul claro", "azul céu", "azul índigo", "azul marinho", "azul mar", "azul / aqua", "aqua", "mandala / azul escuro", "atlântica / azul e petróleo", "blueberry / vanilla", "paisley / petróleo", "azul celeste", "celeste", "azul mar"],
+    "black":      ["black", "preto", "preta", "preto e branco", "preto e verde", "bandhani / preto e branco", "amazônia / preto e verde", "grafite"],
+    "white":      ["white", "branco", "branca", "offwhite", "off-white"],
+    "red":        ["red", "vermelho", "vermelha", "vermelho / laranja", "amora", "amora / rosa", "lótus / amora", "mayuri / bordô", "bordô", "vinho"],
+    "purple":     ["purple", "roxo", "roxa", "lilás", "lilás / azul", "ameixa", "ameixa e rosê", "pink / roxo", "cerrado / ameixa e rosê", "cinza / ameixa", "mandala roxo"],
+    "pink":       ["pink", "rosa", "rosê", "rosa chá", "rosa goiaba", "rosa orquídea", "goiaba", "amora / rosa"],
+    "beige":      ["beige", "bege", "bege escuro", "bege e azul", "madurai / bege", "raja / nude", "pantanal / bege e azul", "avelã", "nude", "bege / cinza"],
+    "brown":      ["brown", "marrom", "café", "cacau", "cinza eucalipto", "telha", "terracota", "avelã"],
+    "grey":       ["grey", "gray", "cinza", "cinza claro", "cinza nude", "grafite", "bege / cinza", "cinza eucalipto"],
+    "gold":       ["gold", "dourado", "açafrão", "amarelo", "amarelo ocre", "ocre"],
+    "turquoise":  ["turquoise", "turquesa", "petróleo", "oceano", "aqua", "azul / aqua", "mandala turquesa"],
+    "orange":     ["orange", "laranja", "pêssego", "caatinga / pêssego e azul", "telha", "terracota"],
+    "yellow":     ["yellow", "amarelo", "amarela", "amarelo ocre", "açafrão", "ocre"],
 }
 
 # Reverse map: lowercased alias -> color_group  (e.g. "preto" -> "black")
@@ -594,85 +577,167 @@ def chat_endpoint(request: ChatRequest):
             
             # Combined text to scan for variant keywords (user query + bot response)
             scan_text = (user_message + " " + resp_text).lower()
-            
+
+            def detect_requested_color_group():
+                """Return the color GROUP name the user is asking for, or None.
+                Priority: user message first, then combined scan_text.
+                """
+                user_msg_lower = user_message.lower()
+                # First pass: check ONLY the user message (more precise)
+                for alias in _SORTED_ALIASES:
+                    if re.search(r'\b' + re.escape(alias) + r'\b', user_msg_lower):
+                        return _ALIAS_TO_GROUP[alias]
+                # Second pass: wordless aliases (short single-word) in full scan_text
+                for alias in _SORTED_ALIASES:
+                    if alias in scan_text:
+                        return _ALIAS_TO_GROUP[alias]
+                return None
+
+            # Calculate once for all cards
+            requested_color_group = detect_requested_color_group()
+            print(f"[Color Debug] requested_color_group='{requested_color_group}' from user_message: '{user_message[:120]}'")
+
             def resolve_variant_image(info):
                 """
                 Use COLOR_MAP to detect what color the user wants, then find the variant
                 of this product that belongs to that color group.
+                Returns a tuple (image_url, matched_color_group, matched_variant_title).
                 Falls back to the general product thumbnail if no color match is found.
                 """
                 variant_images = info.get("variant_images", {})
                 if not variant_images:
-                    return info["image"]
+                    return info["image"], None, None
 
-                # --- Step 1: Detect the user's intended color group from scan_text ---
-                # Iterate aliases longest-first so "azul céu" matches before "azul"
-                detected_group = None
-                for alias in _SORTED_ALIASES:
-                    if alias in scan_text:
-                        detected_group = _ALIAS_TO_GROUP[alias]
-                        break
+                if requested_color_group:
+                    group_aliases = [a.lower() for a in COLOR_MAP[requested_color_group]]
 
-                if detected_group:
-                    # --- Step 2: Find a variant of THIS product in that color group ---
-                    # All aliases that belong to the detected color group
-                    group_aliases = [a.lower() for a in COLOR_MAP[detected_group]]
-
-                    # Check if any of this product's variant titles belong to the color group
+                    # Step 1: Exact match — variant title IS one of the group aliases
                     for v_title_lower, v_thumb in variant_images.items():
                         if v_title_lower in group_aliases:
-                            return v_thumb  # ✅ Exact group match
+                            print(f"[Color Debug]   exact match: '{v_title_lower}' → {v_thumb[:60]}")
+                            return v_thumb, requested_color_group, v_title_lower
 
-                    # Partial fallback: check if any alias word appears in the variant title
+                    # Step 2: Substring match — any alias keyword appears in the variant title
+                    # (e.g. alias='roxo' found inside variant 'pink / roxo')
                     for v_title_lower, v_thumb in variant_images.items():
                         for alias in group_aliases:
-                            if alias in v_title_lower or v_title_lower in alias:
-                                return v_thumb
+                            if alias in v_title_lower:
+                                print(f"[Color Debug]   substring match: alias='{alias}' in variant='{v_title_lower}'")
+                                return v_thumb, requested_color_group, v_title_lower
 
-                # --- Step 3: No color match → fall back to general product thumbnail ---
-                return info["image"]
+                    # Step 3: Reverse substring — variant title is contained in an alias
+                    for v_title_lower, v_thumb in variant_images.items():
+                        for alias in group_aliases:
+                            if v_title_lower in alias:
+                                print(f"[Color Debug]   reverse match: variant='{v_title_lower}' in alias='{alias}'")
+                                return v_thumb, requested_color_group, v_title_lower
+
+                    print(f"[Color Debug]   no variant match for group '{requested_color_group}'. Available: {list(variant_images.keys())}")
+                    # Product doesn't have this color — still return default image but note no color match
+                    return info["image"], None, None
+
+                # No color requested → fall back to general product thumbnail, expose all colors
+                all_colors = list(variant_images.keys())[:5]  # first 5 variant names
+                return info["image"], None, None
             
+            def get_meaningful_words(text):
+                words = set(re.findall(r'\b\w+\b', text.lower()))
+                stops = {'de', 'para', 'e', 'o', 'a', 'com', 'da', 'do', 'em', 'um', 'uma', 'é', 'os', 'as', 'no', 'na', 'por', 'que', 'se'}
+                return words - stops
+
+            resp_lower = resp_text.lower()
+            resp_words = get_meaningful_words(resp_text)
+
             # 1. Prioritize products whose exact full titles are in the response
             for title, info in product_lookup.items():
-                if len(title) > 4 and title.lower() in resp_text.lower():
+                if title in seen_titles:
+                    continue
+                if len(title) > 4 and title.lower() in resp_lower:
                     card = dict(info)
-                    card["image"] = resolve_variant_image(info)
+                    img, matched_color, matched_variant = resolve_variant_image(info)
+                    card["image"] = img
+                    card["color"] = matched_color  # e.g. "black", "green", or None
+                    card["variant"] = matched_variant  # e.g. "preto", "verde floresta", or None
+                    card["available_colors"] = list(info.get("variant_images", {}).keys())
+                    # Skip this card if color was requested but product has no matching variant
+                    if requested_color_group and not matched_color:
+                        print(f"[Card] Skipping '{title}' — no {requested_color_group} variant available")
+                        continue
                     products.append(card)
                     seen_titles.add(title)
+                    print(f"[Card] Exact title match: '{title}' color='{matched_color}' variant='{matched_variant}'")
                 if len(products) >= 3:
                     break
-            
-            # 2. Check source nodes, but rigorously ensure the bot actually mentioned the product
+
+            # 2. Fuzzy match: score product titles by word overlap with the response
+            if len(products) < 3:
+                scored = []
+                for title, info in product_lookup.items():
+                    if title in seen_titles:
+                        continue
+                    # Use base title (strip variant suffixes after ' - ' or ' / ')
+                    normalized = title.replace('\u2013', '-').replace('\u2014', '-')
+                    base = normalized.split(' - ')[0].split(' / ')[0].strip()
+                    title_words = get_meaningful_words(base)
+                    if not title_words:
+                        continue
+                    overlap = title_words.intersection(resp_words)
+                    ratio = len(overlap) / len(title_words)
+                    # Accept if ≥3 words match OR ≥75% of title words match
+                    if len(overlap) >= 3 or ratio >= 0.75:
+                        scored.append((ratio, title, info))
+
+                # Sort by match ratio desc, then add best matches
+                scored.sort(key=lambda x: -x[0])
+                for ratio, title, info in scored:
+                    if title in seen_titles:
+                        continue
+                    card = dict(info)
+                    img, matched_color, matched_variant = resolve_variant_image(info)
+                    card["image"] = img
+                    card["color"] = matched_color
+                    card["variant"] = matched_variant
+                    card["available_colors"] = list(info.get("variant_images", {}).keys())
+                    # Skip if color was requested but product doesn't have that color
+                    if requested_color_group and not matched_color:
+                        print(f"[Card] Fuzzy skip '{title}' — no {requested_color_group} variant")
+                        continue
+                    products.append(card)
+                    seen_titles.add(title)
+                    print(f"[Card] Fuzzy title match ({ratio:.0%}): '{title}' color='{matched_color}'")
+                    if len(products) >= 3:
+                        break
+
+            # 3. Check source nodes as last resort
             if len(products) < 3 and hasattr(response, 'source_nodes'):
-                
-                def get_meaningful_words(text):
-                    words = set(re.findall(r'\b\w+\b', text.lower()))
-                    stops = {'de', 'para', 'e', 'o', 'a', 'com', 'da', 'do', 'em', 'um', 'uma'}
-                    return words - stops
-                
-                resp_words = get_meaningful_words(resp_text)
-                
                 for node in response.source_nodes:
                     metadata = node.node.metadata
                     title = metadata.get('title')
-                    
+
                     if title and title in product_lookup and title not in seen_titles:
-                        # Extract the core product name (ignoring variants like ' - Blue' or ' / L')
-                        normalized_title = title.replace('–', '-').replace('—', '-')
+                        normalized_title = title.replace('\u2013', '-').replace('\u2014', '-')
                         main_part = normalized_title.split('-')[0].split('/')[0].strip()
-                        
+
                         title_words = get_meaningful_words(main_part)
                         overlap = title_words.intersection(resp_words)
-                        
-                        # Only add if at least 3 meaningful words overlap, or if title is short and we got most of it
+
                         if len(overlap) >= 3 or (len(title_words) > 0 and len(overlap) / len(title_words) >= 0.75):
                             info = product_lookup[title]
                             card = dict(info)
-                            card["image"] = resolve_variant_image(info)
+                            img, matched_color, matched_variant = resolve_variant_image(info)
+                            card["image"] = img
+                            card["color"] = matched_color
+                            card["variant"] = matched_variant
+                            card["available_colors"] = list(info.get("variant_images", {}).keys())
+                            # Skip if color was requested but product doesn't have that color
+                            if requested_color_group and not matched_color:
+                                print(f"[Card] Source skip '{title}' — no {requested_color_group} variant")
+                                continue
                             products.append(card)
                             seen_titles.add(title)
-                    
-                    if len(products) >= 3: 
+                            print(f"[Card] Source node match: '{title}' color='{matched_color}'")
+
+                    if len(products) >= 3:
                         break
 
         return {
@@ -686,4 +751,25 @@ def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8005)
+    import subprocess as _sp, time as _t
+
+    PORT = 8005
+
+    # ── Auto-free port 8005 so re-running the server always works ─────────────
+    try:
+        result = _sp.run(
+            ["lsof", "-ti", f":{PORT}"],
+            capture_output=True, text=True
+        )
+        pids = [p.strip() for p in result.stdout.strip().split() if p.strip()]
+        for pid in pids:
+            _sp.run(["kill", "-9", pid], capture_output=True)  # SIGKILL — cannot be ignored
+            print(f"[Server] Freed port {PORT} (killed PID {pid})")
+        if pids:
+            _t.sleep(1.5)  # give OS time to fully release the port
+    except Exception as _e:
+        print(f"[Server] Port-cleanup warning: {_e}")
+    # ──────────────────────────────────────────────────────────────────────────
+
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
